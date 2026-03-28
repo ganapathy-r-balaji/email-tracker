@@ -1,133 +1,276 @@
 "use client";
 
 /**
- * app/dashboard/page.tsx – Placeholder dashboard.
- * Full implementation comes in Step 8.
+ * app/dashboard/page.tsx – Full dashboard.
  *
- * For now: verifies auth is working and shows a "coming soon" message
- * with the user's email and a Sync button so you can test the full OAuth
- * → sync flow end-to-end tonight.
+ * Data flow (React Query):
+ *   useQuery ["me"]            → auth guard + last_sync_at
+ *   useQuery ["stats"]         → StatsBar
+ *   useQuery ["orders", page, statusFilter] → order list
+ *   useMutation syncApi.trigger → SyncButton; invalidates all queries on success
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { authApi, syncApi, is401, CurrentUser } from "@/lib/api";
-import { Package, LogOut, RefreshCw, Loader2 } from "lucide-react";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { Package, LogOut, ChevronLeft, ChevronRight, InboxIcon } from "lucide-react";
+import { authApi, ordersApi, syncApi, is401 } from "@/lib/api";
+import type { Order } from "@/lib/api";
+import { StatsBar } from "@/components/StatsBar";
+import { SyncButton } from "@/components/SyncButton";
+import { OrderCard } from "@/components/OrderCard";
 
+// ─── Status filter options ────────────────────────────────────────────────────
+const STATUS_FILTERS = [
+  { label: "All", value: "" },
+  { label: "Ordered", value: "ordered" },
+  { label: "Shipped", value: "shipped" },
+  { label: "Delivered", value: "delivered" },
+] as const;
+
+type StatusFilter = "" | "ordered" | "shipped" | "delivered";
+
+const PER_PAGE = 20;
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<CurrentUser | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  // ── Auth check on mount ────────────────────────────────────────────────────
-  useEffect(() => {
-    authApi
-      .me()
-      .then((u) => {
-        setUser(u);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (is401(err)) router.replace("/");
-        else setLoading(false);
-      });
-  }, [router]);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  // ── Sync handler ──────────────────────────────────────────────────────────
-  const handleSync = async () => {
-    setSyncing(true);
-    setSyncMsg(null);
-    try {
-      const res = await syncApi.trigger();
-      setSyncMsg(res.message);
-    } catch {
-      setSyncMsg("Sync failed. Please try again.");
-    } finally {
-      setSyncing(false);
-    }
-  };
+  // ── Auth + user ────────────────────────────────────────────────────────────
+  const { data: user, isLoading: userLoading } = useQuery({
+    queryKey: ["me"],
+    queryFn: authApi.me,
+    retry: (count, err) => {
+      if (is401(err)) return false;
+      return count < 2;
+    },
+  });
 
-  // ── Loading ───────────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950">
-        <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
-      </div>
-    );
+  // Redirect to landing if not authenticated
+  const { isError: meError, error: meErr } = useQuery({
+    queryKey: ["me"],
+    queryFn: authApi.me,
+  });
+  if (meError && is401(meErr)) {
+    router.replace("/");
   }
 
-  // ── Dashboard skeleton ────────────────────────────────────────────────────
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["stats"],
+    queryFn: ordersApi.stats,
+    enabled: !!user,
+    refetchInterval: 60_000,
+  });
+
+  // ── Orders list ────────────────────────────────────────────────────────────
+  const { data: ordersData, isLoading: ordersLoading } = useQuery({
+    queryKey: ["orders", page, statusFilter],
+    queryFn: () => ordersApi.list(page, PER_PAGE, statusFilter || undefined),
+    enabled: !!user,
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev, // keep previous data while fetching new page
+  });
+
+  // ── Sync mutation ──────────────────────────────────────────────────────────
+  const syncMutation = useMutation({
+    mutationFn: syncApi.trigger,
+    onSuccess: (data) => {
+      setSyncMessage(data.message);
+      // Delay refetch slightly – give backend a moment to process first emails
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["orders"] });
+        queryClient.invalidateQueries({ queryKey: ["stats"] });
+        queryClient.invalidateQueries({ queryKey: ["me"] });
+        setSyncMessage(null);
+      }, 8_000);
+    },
+    onError: () => {
+      setSyncMessage("Sync failed. Please try again.");
+    },
+  });
+
+  // ── Filter tab change ──────────────────────────────────────────────────────
+  const handleFilterChange = (value: StatusFilter) => {
+    setStatusFilter(value);
+    setPage(1); // reset to page 1 on filter change
+  };
+
+  // ── Loading skeleton ───────────────────────────────────────────────────────
+  const isInitialLoading = userLoading;
+
+  const orders: Order[] = ordersData?.orders ?? [];
+  const totalPages = ordersData?.pages ?? 1;
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      {/* Nav */}
-      <nav className="px-6 py-4 flex items-center justify-between border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          <Package className="w-6 h-6 text-blue-400" />
-          <span className="font-semibold text-lg tracking-tight">
-            PackageTracker AI
-          </span>
+      {/* ── Navbar ─────────────────────────────────────────────────────────── */}
+      <nav className="sticky top-0 z-10 px-4 sm:px-6 py-3 flex items-center justify-between
+                      border-b border-slate-800 bg-slate-950/90 backdrop-blur">
+        <div className="flex items-center gap-2.5">
+          <Package className="w-5 h-5 text-blue-400" />
+          <span className="font-semibold tracking-tight">PackageTracker AI</span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-slate-400 text-sm hidden sm:block">
-            {user?.email}
-          </span>
+          {user && (
+            <span className="text-slate-400 text-sm hidden sm:block truncate max-w-[200px]">
+              {user.email}
+            </span>
+          )}
           <button
             onClick={authApi.logout}
             className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
           >
             <LogOut className="w-4 h-4" />
-            Sign out
+            <span className="hidden sm:inline">Sign out</span>
           </button>
         </div>
       </nav>
 
-      {/* Body */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-20 gap-8 text-center">
-        <div className="space-y-3">
-          <p className="text-slate-400 text-sm">Signed in as</p>
-          <p className="text-white font-medium text-lg">{user?.email}</p>
-          {user?.last_sync_at ? (
-            <p className="text-slate-500 text-xs">
-              Last synced:{" "}
-              {new Date(user.last_sync_at).toLocaleString()}
-            </p>
-          ) : (
-            <p className="text-slate-500 text-xs">No sync yet</p>
-          )}
-        </div>
+      {/* ── Main content ───────────────────────────────────────────────────── */}
+      <main className="flex-1 w-full max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        <div className="max-w-md space-y-2">
-          <h1 className="text-2xl font-bold">
-            You&apos;re connected! 🎉
-          </h1>
-          <p className="text-slate-400">
-            Click <strong>Sync Now</strong> to scan your Gmail for order and
-            shipment emails. The full dashboard is coming in Step 8.
-          </p>
-        </div>
+        {isInitialLoading ? (
+          <PageSkeleton />
+        ) : (
+          <>
+            {/* Stats bar */}
+            <StatsBar stats={stats} loading={statsLoading} />
 
-        {/* Sync button */}
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500
-                     disabled:opacity-50 disabled:cursor-not-allowed
-                     text-white font-semibold rounded-xl transition-all duration-150"
-        >
-          {syncing ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          {syncing ? "Starting sync…" : "Sync Now"}
-        </button>
+            {/* Toolbar: filter tabs + sync button */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              {/* Status filter tabs */}
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-1">
+                {STATUS_FILTERS.map((f) => (
+                  <button
+                    key={f.value}
+                    onClick={() => handleFilterChange(f.value as StatusFilter)}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-100
+                      ${statusFilter === f.value
+                        ? "bg-slate-700 text-white"
+                        : "text-slate-400 hover:text-slate-200"
+                      }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
 
-        {syncMsg && (
-          <p className="text-emerald-400 text-sm">{syncMsg}</p>
+              {/* Sync button */}
+              <SyncButton
+                onSync={() => syncMutation.mutate()}
+                isSyncing={syncMutation.isPending}
+                lastSyncAt={user?.last_sync_at ?? stats?.last_sync_at}
+              />
+            </div>
+
+            {/* Sync status message */}
+            {syncMessage && (
+              <p className="text-emerald-400 text-sm text-center sm:text-right -mt-2">
+                {syncMessage}
+              </p>
+            )}
+
+            {/* Orders list */}
+            {ordersLoading && orders.length === 0 ? (
+              <OrdersSkeleton />
+            ) : orders.length === 0 ? (
+              <EmptyState hasFilter={!!statusFilter} />
+            ) : (
+              <div className="space-y-3">
+                {orders.map((order) => (
+                  <OrderCard key={order.id} order={order} />
+                ))}
+              </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg
+                             border border-slate-700 text-slate-300 hover:bg-slate-800
+                             disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Prev
+                </button>
+                <span className="text-slate-400 text-sm">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg
+                             border border-slate-700 text-slate-300 hover:bg-slate-800
+                             disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </>
         )}
       </main>
+    </div>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function EmptyState({ hasFilter }: { hasFilter: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+      <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center">
+        <InboxIcon className="w-8 h-8 text-slate-500" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-slate-300 font-medium">
+          {hasFilter ? "No orders match this filter" : "No orders yet"}
+        </p>
+        <p className="text-slate-500 text-sm max-w-xs">
+          {hasFilter
+            ? "Try selecting a different status tab."
+            : "Click Sync Now to scan your Gmail for order and shipment emails."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PageSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="grid grid-cols-3 gap-3 sm:gap-4">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-20 rounded-xl bg-slate-800" />
+        ))}
+      </div>
+      <div className="h-10 rounded-lg bg-slate-800 w-64" />
+      <OrdersSkeleton />
+    </div>
+  );
+}
+
+function OrdersSkeleton() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="h-24 rounded-xl bg-slate-800" />
+      ))}
     </div>
   );
 }

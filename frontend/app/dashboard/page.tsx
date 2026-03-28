@@ -23,6 +23,7 @@ import type { Order } from "@/lib/api";
 import { StatsBar } from "@/components/StatsBar";
 import { SyncButton } from "@/components/SyncButton";
 import { OrderCard } from "@/components/OrderCard";
+import { Toast, type ToastState } from "@/components/Toast";
 
 // ─── Status filter options ────────────────────────────────────────────────────
 const STATUS_FILTERS = [
@@ -43,7 +44,7 @@ export default function DashboardPage() {
 
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   // ── Auth + user ────────────────────────────────────────────────────────────
   const { data: user, isLoading: userLoading } = useQuery({
@@ -85,17 +86,16 @@ export default function DashboardPage() {
   const syncMutation = useMutation({
     mutationFn: syncApi.trigger,
     onSuccess: (data) => {
-      setSyncMessage(data.message);
+      setToast({ message: data.message, variant: "success" });
       // Delay refetch slightly – give backend a moment to process first emails
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["orders"] });
         queryClient.invalidateQueries({ queryKey: ["stats"] });
         queryClient.invalidateQueries({ queryKey: ["me"] });
-        setSyncMessage(null);
       }, 8_000);
     },
     onError: () => {
-      setSyncMessage("Sync failed. Please try again.");
+      setToast({ message: "Sync failed. Please check your connection and try again.", variant: "error" });
     },
   });
 
@@ -114,6 +114,7 @@ export default function DashboardPage() {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       {/* ── Navbar ─────────────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-10 px-4 sm:px-6 py-3 flex items-center justify-between
                       border-b border-slate-800 bg-slate-950/90 backdrop-blur">
@@ -173,13 +174,6 @@ export default function DashboardPage() {
                 lastSyncAt={user?.last_sync_at ?? stats?.last_sync_at}
               />
             </div>
-
-            {/* Sync status message */}
-            {syncMessage && (
-              <p className="text-emerald-400 text-sm text-center sm:text-right -mt-2">
-                {syncMessage}
-              </p>
-            )}
 
             {/* Orders list */}
             {ordersLoading && orders.length === 0 ? (

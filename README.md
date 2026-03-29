@@ -9,7 +9,7 @@ Track every order and shipment automatically by connecting your Gmail accounts. 
 ## Screenshots
 
 ### Orders Dashboard
-<img width="3840" height="5572" alt="dashboard" src="https://github.com/user-attachments/assets/8cb1f043-6b7b-4a84-b72b-3fda7e87a2c8" />
+<img width="1382" height="1568" alt="SCR-20260329-jmfd-blurred" src="https://github.com/user-attachments/assets/1f1fe880-8481-468a-90d0-b7f755a66525" />
 
 ### Spending Analysis
 <img width="506" height="802" alt="SCR-20260329-jlxa" src="https://github.com/user-attachments/assets/1d405dca-f37c-4753-8292-f26e916aa66a" />

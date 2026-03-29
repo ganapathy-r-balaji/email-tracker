@@ -62,17 +62,19 @@ def decode_session_cookie(cookie_value: str) -> Optional[int]:
 
 
 # ─── Google credential helpers ────────────────────────────────────────────────
-def get_valid_google_credentials(user):
+def get_valid_google_credentials(account):
     """
-    Build a google.oauth2.credentials.Credentials object from the stored
-    (encrypted) tokens. Refreshes the access token if expired.
-    Returns the Credentials object.
+    Build a google.oauth2.credentials.Credentials object from a GmailAccount's
+    stored (encrypted) tokens. Auto-refreshes if expired.
+
+    Accepts a GmailAccount model instance.
+    The CALLER is responsible for persisting the refreshed token back to the DB.
     """
     import google.oauth2.credentials
     from google.auth.transport.requests import Request
 
-    access_token = decrypt_token(user.gmail_access_token) if user.gmail_access_token else None
-    refresh_token = decrypt_token(user.gmail_refresh_token) if user.gmail_refresh_token else None
+    access_token = decrypt_token(account.access_token) if account.access_token else None
+    refresh_token = decrypt_token(account.refresh_token) if account.refresh_token else None
 
     creds = google.oauth2.credentials.Credentials(
         token=access_token,
@@ -80,12 +82,11 @@ def get_valid_google_credentials(user):
         token_uri="https://oauth2.googleapis.com/token",
         client_id=os.getenv("GOOGLE_CLIENT_ID"),
         client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-        expiry=user.token_expiry,
+        expiry=account.token_expiry,
     )
 
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        # Caller is responsible for persisting the new access token to the DB
     return creds
 
 

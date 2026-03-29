@@ -10,7 +10,7 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from database import SessionLocal
-from models import User
+from models import GmailAccount, User
 
 _scheduler = BackgroundScheduler()
 
@@ -21,17 +21,17 @@ def _sync_all_users():
 
     db = SessionLocal()
     try:
-        users = (
-            db.query(User)
-            .filter(User.gmail_refresh_token.isnot(None))
-            .all()
-        )
-        print(f"[Scheduler] Syncing {len(users)} user(s)...")
-        for user in users:
+        # Find distinct users who have at least one connected GmailAccount
+        user_ids = [
+            row[0]
+            for row in db.query(GmailAccount.user_id).distinct().all()
+        ]
+        print(f"[Scheduler] Syncing {len(user_ids)} user(s)...")
+        for user_id in user_ids:
             try:
-                run_sync(user.id)
+                run_sync(user_id)
             except Exception as exc:
-                print(f"[Scheduler] Sync failed for user {user.id}: {exc}")
+                print(f"[Scheduler] Sync failed for user {user_id}: {exc}")
     finally:
         db.close()
 

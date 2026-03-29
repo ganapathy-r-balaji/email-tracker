@@ -14,13 +14,20 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Must be first – other modules read env vars on import
 
+# Allow OAuth over plain HTTP on localhost (development only).
+# google-auth-oauthlib refuses non-HTTPS by default; this env var disables that check.
+# NEVER set this in production – always run behind HTTPS there.
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from database import init_db
+from routers.accounts import router as accounts_router
 from routers.auth import router as auth_router
 from routers.orders import router as orders_router
+from routers.spending import router as spending_router
 from routers.sync import router as sync_router
 
 app = FastAPI(
@@ -49,7 +56,9 @@ app.add_middleware(
 
 # ─── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
+app.include_router(accounts_router)
 app.include_router(orders_router)
+app.include_router(spending_router)
 app.include_router(sync_router)
 
 

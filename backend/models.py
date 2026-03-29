@@ -2,11 +2,12 @@
 models.py – SQLAlchemy ORM models.
 
 Tables:
-  users       – authenticated Gmail users
-  orders      – individual orders extracted from emails
-  items       – line items within an order
-  shipments   – shipping/tracking info linked to an order
-  email_log   – audit log of every processed Gmail message
+  users           – authenticated users (one per person, identified by primary Gmail)
+  gmail_accounts  – connected Gmail inboxes (many per user)
+  orders          – individual orders extracted from emails
+  items           – line items within an order
+  shipments       – shipping/tracking info linked to an order
+  email_log       – audit log of every processed Gmail message
 """
 
 from __future__ import annotations
@@ -51,7 +52,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
 
-    # OAuth tokens stored Fernet-encrypted (see auth_utils.py)
+    # Legacy single-account token columns – kept for SQLite compat (cannot drop columns).
+    # Tokens for all accounts now live in GmailAccount. A startup migration copies
+    # existing values here into gmail_accounts automatically.
     gmail_access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     gmail_refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_expiry: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -60,6 +63,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
+    gmail_accounts: Mapped[List["GmailAccount"]] = relationship(
+        "GmailAccount", back_populates="user", cascade="all, delete-orphan"
+    )
     orders: Mapped[List["Order"]] = relationship(
         "Order", back_populates="user", cascade="all, delete-orphan"
     )
@@ -71,6 +77,39 @@ class User(Base):
         return f"<User id={self.id} email={self.email}>"
 
 
+# ─── Gmail Accounts ───────────────────────────────────────────────────────────
+class GmailAccount(Base):
+    """One row per connected Gmail inbox per user."""
+
+    __tablename__ = "gmail_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    gmail_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Fernet-encrypted OAuth tokens
+    access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    token_expiry: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="gmail_accounts")
+    email_logs: Mapped[List["EmailLog"]] = relationship(
+        "EmailLog", back_populates="gmail_account"
+    )
+
+    # Each Gmail address can only be connected once per user
+    __table_args__ = (
+        UniqueConstraint("user_id", "gmail_email", name="uq_user_gmail_email"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<GmailAccount id={self.id} email={self.gmail_email} user_id={self.user_id}>"
+
+
 # ─── Orders ──────────────────────────────────────────────────────────────────
 class Order(Base):
     __tablename__ = "orders"
@@ -78,7 +117,6 @@ class Order(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
-    # Vendor-assigned order ID (e.g. "114-1234567-8901234" for Amazon)
     vendor_order_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     vendor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
@@ -88,7 +126,6 @@ class Order(Base):
 
     status: Mapped[str] = mapped_column(String(50), default=OrderStatus.UNKNOWN, nullable=False)
 
-    # Gmail message ID of the first (confirmation) email
     confirmation_email_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -96,7 +133,6 @@ class Order(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    # Relationships
     user: Mapped["User"] = relationship("User", back_populates="orders")
     items: Mapped[List["Item"]] = relationship(
         "Item", back_populates="order", cascade="all, delete-orphan"
@@ -124,7 +160,6 @@ class Item(Base):
     unit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="items")
 
     def __repr__(self) -> str:
@@ -152,7 +187,6 @@ class Shipment(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="shipments")
 
     def __repr__(self) -> str:
@@ -166,7 +200,11 @@ class EmailLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
-    # Gmail's stable message ID – used for deduplication
+    # Which Gmail account this email came from (nullable for legacy rows)
+    gmail_account_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("gmail_accounts.id"), nullable=True, index=True
+    )
+
     gmail_message_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 
     subject: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -176,16 +214,16 @@ class EmailLog(Base):
     category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # If this email was linked to an order
     linked_order_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("orders.id"), nullable=True
     )
 
-    # Relationships
     user: Mapped["User"] = relationship("User", back_populates="email_logs")
+    gmail_account: Mapped[Optional["GmailAccount"]] = relationship(
+        "GmailAccount", back_populates="email_logs"
+    )
     linked_order: Mapped[Optional["Order"]] = relationship("Order", back_populates="email_logs")
 
-    # Each Gmail message should only be processed once per user
     __table_args__ = (
         UniqueConstraint("user_id", "gmail_message_id", name="uq_user_message"),
     )

@@ -41,9 +41,55 @@ def get_db():
         db.close()
 
 
+def _migrate_user_tokens_to_gmail_accounts(db):
+    """
+    One-time idempotent migration: copy tokens from the legacy users table columns
+    into the new gmail_accounts table.
+
+    Runs on every startup but is a no-op if GmailAccount rows already exist for
+    users that have tokens. Safe to run repeatedly.
+    """
+    from models import GmailAccount, User
+
+    users_with_tokens = (
+        db.query(User).filter(User.gmail_refresh_token.isnot(None)).all()
+    )
+    migrated = 0
+    for user in users_with_tokens:
+        exists = (
+            db.query(GmailAccount)
+            .filter(
+                GmailAccount.user_id == user.id,
+                GmailAccount.gmail_email == user.email,
+            )
+            .first()
+        )
+        if not exists:
+            account = GmailAccount(
+                user_id=user.id,
+                gmail_email=user.email,
+                access_token=user.gmail_access_token,
+                refresh_token=user.gmail_refresh_token,
+                token_expiry=user.token_expiry,
+            )
+            db.add(account)
+            migrated += 1
+
+    if migrated:
+        db.commit()
+        print(f"✅ Migrated {migrated} user(s) tokens → gmail_accounts table.")
+
+
 def init_db():
-    """Create all tables. Called on app startup."""
+    """Create all tables and run migrations. Called on app startup."""
     # Import models here so they are registered on Base before create_all
-    from models import User, Order, Item, Shipment, EmailLog  # noqa: F401
+    from models import GmailAccount, User, Order, Item, Shipment, EmailLog  # noqa: F401
     Base.metadata.create_all(bind=engine)
     print("✅ Database tables created (or already exist).")
+
+    # Run token migration so existing users get a GmailAccount row
+    db = SessionLocal()
+    try:
+        _migrate_user_tokens_to_gmail_accounts(db)
+    finally:
+        db.close()

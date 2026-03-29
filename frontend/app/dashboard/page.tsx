@@ -10,20 +10,22 @@
  *   useMutation syncApi.trigger → SyncButton; invalidates all queries on success
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   useQuery,
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Package, LogOut, ChevronLeft, ChevronRight, InboxIcon } from "lucide-react";
-import { authApi, ordersApi, syncApi, is401 } from "@/lib/api";
+import { Package, LogOut, ChevronLeft, ChevronRight, InboxIcon, TrendingUp } from "lucide-react";
+import Link from "next/link";
+import { authApi, ordersApi, syncApi, accountsApi, is401 } from "@/lib/api";
 import type { Order } from "@/lib/api";
 import { StatsBar } from "@/components/StatsBar";
 import { SyncButton } from "@/components/SyncButton";
 import { OrderCard } from "@/components/OrderCard";
 import { Toast, type ToastState } from "@/components/Toast";
+import { ConnectedAccounts } from "@/components/ConnectedAccounts";
 
 // ─── Status filter options ────────────────────────────────────────────────────
 const STATUS_FILTERS = [
@@ -46,6 +48,19 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [toast, setToast] = useState<ToastState | null>(null);
 
+  // ── Show toast + clean URL when redirected back after adding an account ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("account_added") === "true") {
+      setToast({ message: "Gmail account connected!", variant: "success" });
+      const url = new URL(window.location.href);
+      url.searchParams.delete("account_added");
+      window.history.replaceState({}, "", url.toString());
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Auth + user ────────────────────────────────────────────────────────────
   const { data: user, isLoading: userLoading } = useQuery({
     queryKey: ["me"],
@@ -64,6 +79,13 @@ export default function DashboardPage() {
   if (meError && is401(meErr)) {
     router.replace("/");
   }
+
+  // ── Connected Gmail accounts ───────────────────────────────────────────────
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: accountsApi.list,
+    enabled: !!user,
+  });
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -118,9 +140,18 @@ export default function DashboardPage() {
       {/* ── Navbar ─────────────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-10 px-4 sm:px-6 py-3 flex items-center justify-between
                       border-b border-slate-800 bg-slate-950/90 backdrop-blur">
-        <div className="flex items-center gap-2.5">
-          <Package className="w-5 h-5 text-blue-400" />
-          <span className="font-semibold tracking-tight">PackageTracker AI</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <Package className="w-5 h-5 text-blue-400" />
+            <span className="font-semibold tracking-tight">PackageTracker AI</span>
+          </div>
+          <Link
+            href="/spending"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+          >
+            <TrendingUp className="w-4 h-4" />
+            <span className="hidden sm:inline">Spending</span>
+          </Link>
         </div>
         <div className="flex items-center gap-4">
           {user && (
@@ -147,6 +178,13 @@ export default function DashboardPage() {
           <>
             {/* Stats bar */}
             <StatsBar stats={stats} loading={statsLoading} />
+
+            {/* Connected Gmail accounts panel */}
+            <ConnectedAccounts
+              accounts={accounts}
+              onError={(msg) => setToast({ message: msg, variant: "error" })}
+              onSuccess={(msg) => setToast({ message: msg, variant: "success" })}
+            />
 
             {/* Toolbar: filter tabs + sync button */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

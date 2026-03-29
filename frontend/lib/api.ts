@@ -73,6 +73,70 @@ export interface StatsSummary {
   top_vendors: { name: string; count: number }[];
 }
 
+export interface GmailAccount {
+  id: number;
+  gmail_email: string;
+  created_at: string;
+}
+
+// ─── Spending analytics types ─────────────────────────────────────────────────
+
+export interface MonthlyEntry {
+  year: number;
+  month: number;
+  label: string;  // e.g. "Jan '25"
+  total: number;
+  order_count: number;
+}
+
+export interface MonthOfYearEntry {
+  month: number;
+  label: string;  // e.g. "Jan"
+  total: number;
+  order_count: number;
+}
+
+export interface WeekOfMonthEntry {
+  week: number;
+  label: string;  // e.g. "Week 1"
+  total: number;
+  order_count: number;
+}
+
+export interface WeekOfYearEntry {
+  year: number;
+  week: number;
+  label: string;  // e.g. "W3 '25"
+  total: number;
+  order_count: number;
+}
+
+export interface CategoryEntry {
+  category: string;
+  total: number;
+  order_count: number;
+}
+
+export interface TopVendorEntry {
+  vendor: string;
+  total_spent: number;
+  order_count: number;
+  currency: string;
+}
+
+export interface SpendingStats {
+  start_date: string;
+  end_date: string;
+  primary_currency: string;
+  has_data: boolean;
+  by_year_month: MonthlyEntry[];
+  by_month_of_year: MonthOfYearEntry[];
+  by_week_of_month: WeekOfMonthEntry[];
+  by_week_of_year: WeekOfYearEntry[];
+  categories: CategoryEntry[];
+  top_vendors: TopVendorEntry[];
+}
+
 // ─── API functions ────────────────────────────────────────────────────────────
 
 export const authApi = {
@@ -108,6 +172,25 @@ export const syncApi = {
 
   status: () =>
     apiClient.get<{ last_sync_at: string | null }>("/api/sync/status").then((r) => r.data),
+};
+
+export const spendingApi = {
+  stats: (startDate: string, endDate: string) =>
+    apiClient
+      .get<SpendingStats>("/api/stats/spending", {
+        params: { start_date: startDate, end_date: endDate },
+      })
+      .then((r) => r.data),
+};
+
+export const accountsApi = {
+  list: () =>
+    apiClient.get<GmailAccount[]>("/api/accounts").then((r) => r.data),
+
+  remove: (id: number) =>
+    apiClient
+      .delete<{ status: string; gmail_email: string }>(`/api/accounts/${id}`)
+      .then((r) => r.data),
 };
 
 /** Helper: check if an Axios error is a 401 Unauthorized. */

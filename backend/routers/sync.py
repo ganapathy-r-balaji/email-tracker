@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from auth_utils import encrypt_token, get_current_user, get_valid_google_credentials
 from database import SessionLocal, get_db
-from models import EmailCategory, EmailLog, GmailAccount, User
+from models import EmailCategory, EmailLog, GmailAccount, Item, Order, Shipment, User
 from services.classifier import classify_email
 from services.extractor import extract_order_data
 from services.gmail import build_gmail_service, get_email_details, search_order_emails
@@ -58,8 +58,13 @@ def reset_and_sync(
     if not accounts:
         raise HTTPException(status_code=400, detail="No Gmail accounts connected.")
 
-    # Clear all email logs so they get reprocessed
-    db.query(EmailLog).filter(EmailLog.user_id == current_user.id).delete()
+    # Clear all data so everything gets reprocessed from scratch
+    order_ids = [r[0] for r in db.query(Order.id).filter(Order.user_id == current_user.id).all()]
+    if order_ids:
+        db.query(Shipment).filter(Shipment.order_id.in_(order_ids)).delete(synchronize_session=False)
+        db.query(Item).filter(Item.order_id.in_(order_ids)).delete(synchronize_session=False)
+    db.query(Order).filter(Order.user_id == current_user.id).delete(synchronize_session=False)
+    db.query(EmailLog).filter(EmailLog.user_id == current_user.id).delete(synchronize_session=False)
     db.commit()
 
     background_tasks.add_task(run_sync, current_user.id)

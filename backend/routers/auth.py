@@ -99,9 +99,13 @@ def google_login(
         code_challenge_method="S256",
     )
 
+    is_production = not GOOGLE_REDIRECT_URI.startswith("http://localhost")
+
     redirect = RedirectResponse(url=authorization_url)
-    redirect.set_cookie(key="oauth_state", value=state, httponly=True, max_age=300, samesite="lax")
-    redirect.set_cookie(key="oauth_code_verifier", value=code_verifier, httponly=True, max_age=300, samesite="lax")
+    redirect.set_cookie(key="oauth_state", value=state, httponly=True, max_age=300,
+                        samesite="none" if is_production else "lax", secure=is_production)
+    redirect.set_cookie(key="oauth_code_verifier", value=code_verifier, httponly=True, max_age=300,
+                        samesite="none" if is_production else "lax", secure=is_production)
 
     # If adding a second account, remember which user to link it to
     if action == "add":
@@ -115,7 +119,8 @@ def google_login(
                     value=str(linking_user_id),
                     httponly=True,
                     max_age=300,
-                    samesite="lax",
+                    samesite="none" if is_production else "lax",
+                    secure=is_production,
                 )
 
     return redirect
@@ -214,8 +219,8 @@ def google_callback(
         value=session_value,
         httponly=True,
         max_age=60 * 60 * 24 * 30,
-        samesite="lax",
-        secure=False,
+        samesite="none" if is_production else "lax",
+        secure=is_production,
     )
     redirect.delete_cookie("oauth_state")
     redirect.delete_cookie("oauth_code_verifier")

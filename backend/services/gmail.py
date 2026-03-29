@@ -17,10 +17,11 @@ import html2text
 from googleapiclient.discovery import build as google_build
 
 # Gmail search query – broad enough to catch all major vendors
+# Note: do NOT exclude promotions – most order confirmations land in that tab
 _ORDER_QUERY = (
     "subject:(order OR shipment OR shipping OR tracking OR "
     "delivered OR receipt OR invoice OR purchase OR confirmation OR dispatch) "
-    "-category:social -category:promotions -category:forums"
+    "-category:social -category:forums"
 )
 
 _HTML_TO_TEXT = html2text.HTML2Text()

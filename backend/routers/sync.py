@@ -47,6 +47,25 @@ def trigger_sync(
     }
 
 
+# ─── Force re-sync (clears existing logs and re-processes) ────────────────────
+@router.post("/api/sync/reset")
+def reset_and_sync(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    accounts = db.query(GmailAccount).filter(GmailAccount.user_id == current_user.id).all()
+    if not accounts:
+        raise HTTPException(status_code=400, detail="No Gmail accounts connected.")
+
+    # Clear all email logs so they get reprocessed
+    db.query(EmailLog).filter(EmailLog.user_id == current_user.id).delete()
+    db.commit()
+
+    background_tasks.add_task(run_sync, current_user.id)
+    return {"status": "reset_started", "message": "Email logs cleared. Re-syncing all emails."}
+
+
 # ─── Sync status ──────────────────────────────────────────────────────────────
 @router.get("/api/sync/status")
 def sync_status(current_user: User = Depends(get_current_user)):

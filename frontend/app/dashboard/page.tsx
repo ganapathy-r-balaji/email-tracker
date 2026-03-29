@@ -17,7 +17,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Package, LogOut, ChevronLeft, ChevronRight, InboxIcon, TrendingUp } from "lucide-react";
+import { Package, LogOut, ChevronLeft, ChevronRight, InboxIcon, TrendingUp, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { authApi, ordersApi, syncApi, accountsApi, is401 } from "@/lib/api";
 import type { Order } from "@/lib/api";
@@ -109,7 +109,6 @@ export default function DashboardPage() {
     mutationFn: syncApi.trigger,
     onSuccess: (data) => {
       setToast({ message: data.message, variant: "success" });
-      // Delay refetch slightly – give backend a moment to process first emails
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["orders"] });
         queryClient.invalidateQueries({ queryKey: ["stats"] });
@@ -118,6 +117,22 @@ export default function DashboardPage() {
     },
     onError: () => {
       setToast({ message: "Sync failed. Please check your connection and try again.", variant: "error" });
+    },
+  });
+
+  // ── Reset & re-sync mutation ───────────────────────────────────────────────
+  const resetMutation = useMutation({
+    mutationFn: syncApi.reset,
+    onSuccess: (data) => {
+      setToast({ message: data.message, variant: "success" });
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["orders"] });
+        queryClient.invalidateQueries({ queryKey: ["stats"] });
+        queryClient.invalidateQueries({ queryKey: ["me"] });
+      }, 8_000);
+    },
+    onError: () => {
+      setToast({ message: "Reset failed. Please try again.", variant: "error" });
     },
   });
 
@@ -205,12 +220,29 @@ export default function DashboardPage() {
                 ))}
               </div>
 
-              {/* Sync button */}
-              <SyncButton
-                onSync={() => syncMutation.mutate()}
-                isSyncing={syncMutation.isPending}
-                lastSyncAt={user?.last_sync_at ?? stats?.last_sync_at}
-              />
+              {/* Sync + Reset buttons */}
+              <div className="flex items-center gap-2">
+                <SyncButton
+                  onSync={() => syncMutation.mutate()}
+                  isSyncing={syncMutation.isPending}
+                  lastSyncAt={user?.last_sync_at ?? stats?.last_sync_at}
+                />
+                <button
+                  onClick={() => {
+                    if (confirm("This will clear all synced emails and re-process from scratch. Continue?")) {
+                      resetMutation.mutate();
+                    }
+                  }}
+                  disabled={resetMutation.isPending || syncMutation.isPending}
+                  title="Clear all email logs and re-sync from scratch"
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg
+                             border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500
+                             disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <RotateCcw className={`w-4 h-4 ${resetMutation.isPending ? "animate-spin" : ""}`} />
+                  <span className="hidden sm:inline">Reset & Re-sync</span>
+                </button>
+              </div>
             </div>
 
             {/* Orders list */}

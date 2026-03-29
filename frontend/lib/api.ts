@@ -170,6 +170,9 @@ export const syncApi = {
   trigger: () =>
     apiClient.post<{ status: string; message: string }>("/api/sync").then((r) => r.data),
 
+  reset: () =>
+    apiClient.post<{ status: string; message: string }>("/api/sync/reset").then((r) => r.data),
+
   status: () =>
     apiClient.get<{ last_sync_at: string | null }>("/api/sync/status").then((r) => r.data),
 };

@@ -176,7 +176,12 @@ def _process_single_email(
         from_addr=email["from"],
         body=email["body_text"],
         category=category,
+        email_date=email.get("date"),
     )
+
+    # Fallback: if Claude couldn't extract an order_date, use the email's received date
+    if not extracted.get("order_date") and email.get("date"):
+        extracted["order_date"] = email["date"].strftime("%Y-%m-%d")
 
     order = link_and_store(
         db=db,

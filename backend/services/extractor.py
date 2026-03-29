@@ -46,7 +46,7 @@ Rules:
 - Return ONLY the JSON object — no markdown fences, no explanation text"""
 
 
-def extract_order_data(subject: str, from_addr: str, body: str, category: str) -> dict:
+def extract_order_data(subject: str, from_addr: str, body: str, category: str, email_date=None) -> dict:
     """
     Extract structured order data from an email using Claude.
 
@@ -62,11 +62,13 @@ def extract_order_data(subject: str, from_addr: str, body: str, category: str) -
     """
     # Use up to 8000 chars for extraction – more context is needed vs classification
     truncated_body = body[:8000]
+    date_hint = f"Email received: {email_date.strftime('%Y-%m-%d')}\n" if email_date else ""
     user_message = (
         f"Email category: {category}\n"
         f"Subject: {subject}\n"
-        f"From: {from_addr}\n\n"
-        f"{truncated_body}"
+        f"From: {from_addr}\n"
+        f"{date_hint}"
+        f"\n{truncated_body}"
     )
 
     raw = _call_with_retry(user_message, max_tokens=1024)

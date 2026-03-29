@@ -59,12 +59,13 @@ def reset_and_sync(
         raise HTTPException(status_code=400, detail="No Gmail accounts connected.")
 
     # Clear all data so everything gets reprocessed from scratch
+    # Order matters: EmailLog references Orders, Items/Shipments reference Orders
     order_ids = [r[0] for r in db.query(Order.id).filter(Order.user_id == current_user.id).all()]
+    db.query(EmailLog).filter(EmailLog.user_id == current_user.id).delete(synchronize_session=False)
     if order_ids:
         db.query(Shipment).filter(Shipment.order_id.in_(order_ids)).delete(synchronize_session=False)
         db.query(Item).filter(Item.order_id.in_(order_ids)).delete(synchronize_session=False)
     db.query(Order).filter(Order.user_id == current_user.id).delete(synchronize_session=False)
-    db.query(EmailLog).filter(EmailLog.user_id == current_user.id).delete(synchronize_session=False)
     db.commit()
 
     background_tasks.add_task(run_sync, current_user.id)

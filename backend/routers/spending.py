@@ -15,8 +15,7 @@ All monetary values are in the user's primary currency only.
 Orders with null total_price or null order_date are excluded.
 """
 
-import calendar
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -35,7 +34,6 @@ MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 def _default_start() -> str:
-    """12 months ago from today."""
     today = date.today()
     start = today.replace(year=today.year - 1) if today.month != 2 or today.day != 29 else \
         today.replace(year=today.year - 1, day=28)
@@ -71,13 +69,6 @@ def spending_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Return six spending breakdown datasets for the given date range.
-
-    Params:
-      start_date – ISO date string (default: 12 months ago)
-      end_date   – ISO date string (default: today)
-    """
     start_str = start_date or _default_start()
     end_str = end_date or _default_end()
 
@@ -93,7 +84,6 @@ def spending_stats(
     uid = current_user.id
     currency = _primary_currency(db, uid, start_dt, end_dt)
 
-    # Base filter shared by order-level queries
     base = (
         Order.user_id == uid,
         Order.total_price.isnot(None),
@@ -104,27 +94,27 @@ def spending_stats(
     )
 
     # ── 1. By year-month ──────────────────────────────────────────────────────
+    yr_expr = cast(func.extract("year", Order.order_date), Integer)
+    mo_expr = cast(func.extract("month", Order.order_date), Integer)
+
     ym_rows = (
         db.query(
-            func.strftime("%Y", Order.order_date).label("yr"),
-            func.strftime("%m", Order.order_date).label("mo"),
+            yr_expr.label("yr"),
+            mo_expr.label("mo"),
             func.sum(Order.total_price).label("total"),
             func.count(Order.id).label("cnt"),
         )
         .filter(*base)
-        .group_by(
-            func.strftime("%Y", Order.order_date),
-            func.strftime("%m", Order.order_date),
-        )
-        .order_by("yr", "mo")
+        .group_by(yr_expr, mo_expr)
+        .order_by(yr_expr, mo_expr)
         .all()
     )
 
     by_year_month = [
         {
-            "year": int(r.yr),
-            "month": int(r.mo),
-            "label": f"{MONTH_NAMES[int(r.mo) - 1]} '{r.yr[2:]}",
+            "year": r.yr,
+            "month": r.mo,
+            "label": f"{MONTH_NAMES[r.mo - 1]} '{str(r.yr)[2:]}",
             "total": round(r.total or 0, 2),
             "order_count": r.cnt,
         }
@@ -134,17 +124,17 @@ def spending_stats(
     # ── 2. By month of year (Jan–Dec aggregate across all years in range) ─────
     moy_rows = (
         db.query(
-            func.strftime("%m", Order.order_date).label("mo"),
+            mo_expr.label("mo"),
             func.sum(Order.total_price).label("total"),
             func.count(Order.id).label("cnt"),
         )
         .filter(*base)
-        .group_by(func.strftime("%m", Order.order_date))
-        .order_by("mo")
+        .group_by(mo_expr)
+        .order_by(mo_expr)
         .all()
     )
 
-    moy_map = {int(r.mo): (round(r.total or 0, 2), r.cnt) for r in moy_rows}
+    moy_map = {r.mo: (round(r.total or 0, 2), r.cnt) for r in moy_rows}
     by_month_of_year = [
         {
             "month": m,
@@ -156,23 +146,22 @@ def spending_stats(
     ]
 
     # ── 3. By week of month (1–5) ─────────────────────────────────────────────
-    # SQLite: week_of_month = ((day - 1) / 7) + 1
-    day_expr = cast(func.strftime("%d", Order.order_date), Integer)
+    day_expr = cast(func.extract("day", Order.order_date), Integer)
     week_of_month_expr = (day_expr - 1) / 7 + 1
 
     wom_rows = (
         db.query(
-            week_of_month_expr.label("wom"),
+            cast(week_of_month_expr, Integer).label("wom"),
             func.sum(Order.total_price).label("total"),
             func.count(Order.id).label("cnt"),
         )
         .filter(*base)
-        .group_by(week_of_month_expr)
-        .order_by(week_of_month_expr)
+        .group_by(cast(week_of_month_expr, Integer))
+        .order_by(cast(week_of_month_expr, Integer))
         .all()
     )
 
-    wom_map = {int(r.wom): (round(r.total or 0, 2), r.cnt) for r in wom_rows}
+    wom_map = {r.wom: (round(r.total or 0, 2), r.cnt) for r in wom_rows}
     by_week_of_month = [
         {
             "week": w,
@@ -183,28 +172,27 @@ def spending_stats(
         for w in range(1, 6)
     ]
 
-    # ── 4. By week of year (ISO week 00–53) ───────────────────────────────────
+    # ── 4. By week of year (ISO week 1–53) ────────────────────────────────────
+    wk_expr = cast(func.extract("week", Order.order_date), Integer)
+
     woy_rows = (
         db.query(
-            func.strftime("%Y", Order.order_date).label("yr"),
-            func.strftime("%W", Order.order_date).label("wk"),
+            yr_expr.label("yr"),
+            wk_expr.label("wk"),
             func.sum(Order.total_price).label("total"),
             func.count(Order.id).label("cnt"),
         )
         .filter(*base)
-        .group_by(
-            func.strftime("%Y", Order.order_date),
-            func.strftime("%W", Order.order_date),
-        )
-        .order_by("yr", "wk")
+        .group_by(yr_expr, wk_expr)
+        .order_by(yr_expr, wk_expr)
         .all()
     )
 
     by_week_of_year = [
         {
-            "year": int(r.yr),
-            "week": int(r.wk),
-            "label": f"W{int(r.wk)} '{r.yr[2:]}",
+            "year": r.yr,
+            "week": r.wk,
+            "label": f"W{r.wk} '{str(r.yr)[2:]}",
             "total": round(r.total or 0, 2),
             "order_count": r.cnt,
         }

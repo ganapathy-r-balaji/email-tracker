@@ -6,6 +6,16 @@ Track every order and shipment automatically by connecting your Gmail accounts. 
 
 ---
 
+## Screenshots
+
+### Orders Dashboard
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Spending Analysis
+![Spending Analysis](docs/screenshots/spending.png)
+
+---
+
 ## Features
 
 - **Multi-Gmail support** — connect multiple Gmail accounts to a single dashboard

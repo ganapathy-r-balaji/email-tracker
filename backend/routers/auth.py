@@ -99,8 +99,6 @@ def google_login(
         code_challenge_method="S256",
     )
 
-    is_production = not GOOGLE_REDIRECT_URI.startswith("http://localhost")
-
     redirect = RedirectResponse(url=authorization_url)
     redirect.set_cookie(key="oauth_state", value=state, httponly=True, max_age=300,
                         samesite="none" if is_production else "lax", secure=is_production)
@@ -125,6 +123,8 @@ def google_login(
 
     return redirect
 
+
+is_production = not GOOGLE_REDIRECT_URI.startswith("http://localhost")
 
 # ─── OAuth Callback ───────────────────────────────────────────────────────────
 @router.get("/auth/google/callback")
